@@ -13,7 +13,7 @@
 const express = require('express');
 
 // Import controllers for handling the business logic of each route.
-const authController = require('../controllers/authController');
+const authController = require('../../controllers/authController');
 
 // Import middleware for securing and validating routes.
 const authMiddleware = require('../middleware/authMiddleware');
