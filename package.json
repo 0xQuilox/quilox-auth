@@ -2,12 +2,13 @@
   "name": "quilox-auth",
   "version": "1.0.0",
   "description": "Quilox Auth 🔑\r A secure and scalable authentication and authorization middleware for Node.js and Express.js applications.",
-  "main": "index.js",
+  "repository": { "url": "https://github.com/0xQuilox/quilox-auth.git" },
+  "main": "src/index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
-  "author": "",
+  "author": "Tajudeen Miftahudeen Akorede",
   "license": "ISC",
   "dependencies": {
     "bcryptjs": "^3.0.2",
