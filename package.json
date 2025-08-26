@@ -7,7 +7,7 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": [],
+  "keywords": [quilox, auth, authentication, authorization, middleware, nodejs, expressjs, security, jwt, passportjs, bcryptjs, cors, helmet, mongoose, joi],
   "author": "Tajudeen Miftahudeen Akorede",
   "license": "ISC",
   "dependencies": {
