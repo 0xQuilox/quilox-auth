@@ -1,21 +1,18 @@
 # Quilox Auth 🔑
-A secure and scalable authentication and authorization middleware for Node.js and Express.js applications.
+Quilox-Auth is a robust and scalable authentication and authorization boilerplate built on the Node.js and Express.js stack. It provides a secure foundation for any API, featuring:
 
 # Overview
-Quilox Auth is a robust, production-ready solution for managing user authentication and access control. It provides a complete end-to-end system for user registration, login, and secure session management using JSON Web Tokens (JWTs). Additionally, it includes a flexible Role-Based Access Control (RBAC) middleware to protect your application's routes and resources.
+JSON Web Token (JWT) Authentication: For stateless and secure user sessions.
 
-This module is built with security best practices in mind, including password hashing, token expiration, and secure route protection.
+Role-Based Access Control (RBAC): To manage and restrict user permissions.
 
-# Key Features
-✨ JWT-Based Authentication: Implements a stateless authentication system using JSON Web Tokens.
+Data Validation: Ensures incoming data is clean and valid.
 
-🛡️ Robust Authorization: Uses Role-Based Access Control (RBAC) to manage user permissions.
+Secure Password Handling: Uses bcrypt for one-way password hashing.
 
-🔐 Secure Password Handling: Integrates bcrypt.js for secure password hashing and salting.
+Modular Architecture: Keeps the codebase organized and easy to extend.
 
-⚙️ Middleware-Driven: Provides easy-to-use Express.js middleware for authentication and authorization.
-
-📝 Input Validation: Ensures data integrity and security with input validation.
+This project is designed to be a starting point, providing all the core security features you need to build your API with confidence.This module is built with security best practices in mind, including password hashing, token expiration, and secure route protection.
 
 # Prerequisites
 To use this module, you should have the following installed:
@@ -36,24 +33,22 @@ Since this module is a complete solution, you'll also need to install the core d
 npm install express mongoose bcrypt jsonwebtoken dotenv
 
 # Getting Started
-1. Project Structure
-This module assumes a standard Node.js and Express.js project structure. Your project should have a structure similar to this:
+Follow these steps to get your project up and running.
 
-your-project/
-├── controllers/
-│   ├── authController.js
-├── middleware/
-│   ├── authMiddleware.js
-│   ├── rbacMiddleware.js
-│   ├── validatorMiddleware.js
-├── models/
-│   ├── userModel.js
-├── routes/
-│   ├── authRoutes.js
-├── .env
-└── server.js
+1. Clone the Repository
+Bash
 
-2. Configuration (.env)
+git clone <your-repository-url>
+cd <your-project-directory>
+
+2. Install Dependencies
+Use npm to install all the necessary packages for the project.
+
+Bash
+
+npm install
+
+3. Configuration (.env)
 Create a .env file in the root of your project to store sensitive information.
 
 MONGO_URI=your_mongodb_connection_string
@@ -62,185 +57,45 @@ JWT_EXPIRES_IN=1h
 JWT_REFRESH_SECRET=your_super_secret_refresh_key
 JWT_REFRESH_EXPIRES_IN=7d
 
-3. User Model (models/userModel.js)
-Define your user schema using Mongoose. The role field is crucial for the RBAC system.
+4. Run the Server
+Start the application using the following command:
 
-const mongoose = require('mongoose');
-const bcrypt = require('bcryptjs');
+Bash
 
-const userSchema = new mongoose.Schema({
-  email: {
-    type: String,
-    required: true,
-    unique: true,
-    lowercase: true,
-  },
-  password: {
-    type: String,
-    required: true,
-    select: false, // Prevents the password from being returned by default in queries
-  },
-  role: {
-    type: String,
-    enum: ['user', 'editor', 'admin'],
-    default: 'user',
-  },
-});
+node server.js
+The server should now be running, and you'll see a message in your console: Server is listening on port 3000.
 
-// Hash the password before saving the user
-userSchema.pre('save', async function (next) {
-  if (!this.isModified('password')) {
-    return next();
-  }
-  const salt = await bcrypt.genSalt(10);
-  this.password = await bcrypt.hash(this.password, salt);
-  next();
-});
+# API Endpoints
+POST	/api/users	Creates a new user (registration).	Public
+GET	/api/users	Retrieves a list of all users.	Private (Admin-only)
+GET	/api/users/:id	Retrieves a single user by ID.	Private (Admin-only)
+PUT	/api/users/:id	Updates a user's details.	Private (Admin-only)
+DELETE	/api/users/:id	Deletes a user.	Private (Admin-only)
+POST	/api/posts	Creates a new post.	Private (Admin/Editor)
+GET	/api/posts	Retrieves a list of all posts.	Public
+GET	/api/posts/:id	Retrieves a single post by ID.	Public
+PUT	/api/posts/:id	Updates a post.	Private (Admin/Editor)
+DELETE	/api/posts/:id	Deletes a post.	Private (Admin-only)
 
-const User = mongoose.model('User', userSchema);
-module.exports = User;
-
-4. Middleware (middleware/)
-middleware/authMiddleware.js
-This middleware verifies the JWT from the request header.
-
-const jwt = require('jsonwebtoken');
-
-const authMiddleware = (req, res, next) => {
-  const token = req.header('Authorization')?.replace('Bearer ', '');
-
-  if (!token) {
-    return res.status(401).json({ message: 'No token, authorization denied' });
-  }
-
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded.user;
-    next();
-  } catch (error) {
-    res.status(401).json({ message: 'Token is not valid' });
-  }
-};
-
-module.exports = authMiddleware;
-
-middleware/rbacMiddleware.js
-This middleware checks if the user's role has the required permissions.
-
-const roles = {
-  admin: ['create', 'read', 'update', 'delete', 'manage_users'],
-  editor: ['create', 'read', 'update'],
-  user: ['read'],
-};
-
-const rbacMiddleware = (requiredPermissions) => (req, res, next) => {
-  const userRole = req.user.role;
-
-  if (!userRole || !roles[userRole]) {
-    return res.status(403).json({ message: 'Forbidden' });
-  }
-
-  const hasPermission = requiredPermissions.every((permission) =>
-    roles[userRole].includes(permission)
-  );
-
-  if (!hasPermission) {
-    return res.status(403).json({ message: 'Forbidden' });
-  }
-
-  next();
-};
-
-module.exports = rbacMiddleware;
-
-5. Routes (routes/authRoutes.js)
-Define your API endpoints and protect them with middleware.
-
-const express = require('express');
-const router = express.Router();
-const authController = require('../controllers/authController');
-const authMiddleware = require('../middleware/authMiddleware');
-const rbacMiddleware = require('../middleware/rbacMiddleware');
-
-// Public routes (no authentication required)
-router.post('/register', authController.register);
-router.post('/login', authController.login);
-
-// Protected routes (authentication required)
-router.get('/profile', authMiddleware, authController.getProfile);
-
-// Protected route with RBAC
-router.delete('/users/:id', authMiddleware, rbacMiddleware(['manage_users']), authController.deleteUser);
-
-module.exports = router;
-
-6. Main Server File (server.js)
-Set up your Express server and connect to the database.
-
-const express = require('express');
-const mongoose = require('mongoose');
-const dotenv = require('dotenv');
-const authRoutes = require('./routes/authRoutes');
-
-dotenv.config();
-
-const app = express();
-app.use(express.json());
-
-// Database connection
-mongoose.connect(process.env.MONGO_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-})
-.then(() => console.log('MongoDB connected'))
-.catch(err => console.error(err));
-
-// Use the auth routes
-app.use('/api', authRoutes);
-
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-
-# Usage
-Once you have set up your project, you can use a tool like Postman or your frontend application to interact with the API.
-
-Register a User
-Method: POST
-
-URL: http://localhost:5000/api/register
-
-Body (JSON):
-
-{
-  "email": "testuser@example.com",
-  "password": "strongpassword123",
-  "role": "editor"
-}
-
-(Note: You can omit the role to use the default user role)
-
-Log In
-Method: POST
-
-URL: http://localhost:5000/api/login
-
-Body (JSON):
-
-{
-  "email": "testuser@example.com",
-  "password": "strongpassword123"
-}
-
-Response: Will contain a JWT.
-
-Access a Protected Route
-Method: GET
-
-URL: http://localhost:5000/api/profile
-
-Headers:
-
-Authorization: Bearer <your_jwt_token>
+# Project Structure
+.
+├── .env                  # Environment variables
+├── node_modules/         # Installed dependencies
+├── package.json          # Project metadata
+├── server.js             # Main entry point of the app
+└── src/
+    ├── api/
+    │   ├── routes/
+    │   │   ├── authRoutes.js     # User registration and login
+    │   │   ├── userRoutes.js     # API endpoints for user management
+    │   │   └── postRoutes.js     # API endpoints for post management
+    ├── middleware/
+    │   ├── authMiddleware.js     # JWT authentication middleware
+    │   ├── rbacMiddleware.js     # Role-based access control
+    │   └── validatorMiddleware.js# Joi-based data validation
+    └── utils/
+        ├── jwtUtils.js           # JWT generation and verification
+        └── passwordUtils.js      # Password hashing and comparison
 
 # Contributing
 We welcome contributions! If you would like to contribute, please follow these steps:
