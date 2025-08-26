@@ -163,3 +163,13 @@ app.listen(port, () => {
   console.log('\nExample curl command for a failed request (missing required fields):');
   console.log(`curl -X POST -H "Content-Type: application/json" -d '{"email": "test@example.com"}' http://localhost:${port}/users`);
 });
+
+// =========================================================================
+// 2. Export the Middleware
+// =========================================================================
+
+/**
+ * @exports {function} The validate middleware function.
+ * This is the crucial line that makes the function available for other files to use.
+ */
+module.exports = validate;

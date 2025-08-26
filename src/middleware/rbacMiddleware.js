@@ -162,3 +162,7 @@ app.listen(port, () => {
   console.log('\n❌ Viewer (delete:post permission missing):');
   console.log(`curl -H "x-user-role: viewer" -X DELETE http://localhost:${port}/posts/1`);
 });
+
+// This is the crucial line:
+// It exports the middleware function so it can be used by other modules.
+module.exports = rbacMiddleware;
