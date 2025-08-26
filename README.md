@@ -46,7 +46,7 @@ Use npm to install all the necessary packages for the project.
 
 Bash
 
-npm install
+<npm install>
 
 3. Configuration (.env)
 Create a .env file in the root of your project to store sensitive information.
