@@ -18,9 +18,8 @@ const router = express.Router();
 // 1. Import Middleware & Placeholder for Auth
 // =========================================================================
 
-// Import the middlewares you've already created.
-const validatorMiddleware = require('../src/middleware/validatorMiddleware');
-const rbacMiddleware = require('../src/middleware/rbacMiddleware');
+const validatorMiddleware = require('../../middleware/validatorMiddleware');
+const rbacMiddleware = require('../../middleware/rbacMiddleware');
 
 // IMPORTANT: This is a placeholder. You will create this file next.
 // It's crucial for your route protection.

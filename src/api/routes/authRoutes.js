@@ -13,17 +13,17 @@
 const express = require('express');
 
 // Import controllers for handling the business logic of each route.
-const authController = require('../../controllers/authController');
+const authController = require('../src/controllers/authController');
 
 // Import middleware for securing and validating routes.
-const authMiddleware = require('../middleware/authMiddleware');
-const rbacMiddleware = require('../middleware/rbacMiddleware');
+const authMiddleware = require('../src/middleware/authMiddleware');
+const rbacMiddleware = require('../src/middleware/rbacMiddleware');
 const {
   validateUserRegistration,
   validateUserLogin,
   validateProfileUpdate,
   validatePasswordChange,
-} = require('../middleware/validatorMiddleware');
+} = require('../src/middleware/validatorMiddleware');
 
 // Create a new router instance from Express.
 const router = express.Router();
