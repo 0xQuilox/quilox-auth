@@ -36,8 +36,7 @@ npm install express mongoose bcrypt jsonwebtoken dotenv
 Follow these steps to get your project up and running.
 
 1. Clone the Repository
-Bash
-
+Bash: npm install
 git clone <your-repository-url>
 cd <your-project-directory>
 
