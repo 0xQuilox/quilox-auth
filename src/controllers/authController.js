@@ -11,7 +11,7 @@
 
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-const User = require('../models/userModel'); // Import the Mongoose User model
+const User = require('../src/models/userModel'); // Import the Mongoose User model
 
 // -------------------
 // 2. HELPER FUNCTIONS

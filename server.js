@@ -1,111 +1,78 @@
 /**
  * @file server.js
- * @description The main entry point for the Quilox Auth API.
- * This file sets up the Express server, connects to the MongoDB database,
- * and integrates all the necessary middleware and routes for authentication
- * and authorization.
+ * @description The main entry point for the application. This file sets up the
+ * Express server, configures middleware, and mounts all API routes.
+ *
+ * This server.js is designed to be lean and modular. It delegates route handling,
+ * validation, and authentication to dedicated files, keeping the main file clean
+ * and easy to manage.
  */
 
-// -------------------
-// 1. MODULE IMPORTS
-// -------------------
-
-// Core Express framework and utilities
 const express = require('express');
-const mongoose = require('mongoose');
 const dotenv = require('dotenv');
 
-// Security and utility middleware
-const helmet = require('helmet'); // Secures HTTP headers
-const cors = require('cors'); // Enables Cross-Origin Resource Sharing
-const morgan = require('morgan'); // HTTP request logger
-
-// Custom project modules (routes)
-const authRoutes = require('./routes/authRoutes');
-
-// -------------------
-// 2. CONFIGURATION
-// -------------------
-
-// Load environment variables from a .env file
+// Load environment variables from a .env file.
+// This is essential for accessing the JWT_SECRET and other configurations.
 dotenv.config();
 
-// Create the main Express application instance
+// =========================================================================
+// 1. Import Routes and Middleware
+// =========================================================================
+
+// Import the route files that you have created.
+// These files contain the route definitions and use our custom middleware.
+const userRoutes = require('./src/api/routes/userRoutes');
+const postRoutes = require('./src/api/routes/postRoutes');
+
+// Import your custom middlewares.
+// Although they are also used within the route files, you can mount them globally here if needed.
+const rbacMiddleware = require('./src/middleware/rbacMiddleware');
+const validatorMiddleware = require('./src/middleware/validatorMiddleware');
+
+// The `authMiddleware` is a crucial next step, so we'll leave a placeholder here.
+// const authMiddleware = require('./src/middleware/authMiddleware');
+
+// =========================================================================
+// 2. Server Initialization and Configuration
+// =========================================================================
+
+// Create a new Express application instance.
 const app = express();
+const port = process.env.PORT || 3000;
 
-// -------------------
-// 3. MIDDLEWARE SETUP
-// -------------------
+// =========================================================================
+// 3. Global Middleware
+// =========================================================================
 
-// Use Helmet for security headers to protect against common attacks
-app.use(helmet());
-
-// Use CORS to allow requests from different origins (e.g., a frontend app)
-// You can configure this to be more restrictive in a production environment.
-app.use(cors());
-
-// Use Morgan for logging HTTP requests.
-// 'dev' format provides concise, color-coded output.
-app.use(morgan('dev'));
-
-// Middleware to parse incoming JSON requests.
-// This makes the request body available on `req.body`.
+// Body parser middleware to handle incoming JSON data.
+// This must be used before any route that handles JSON payloads.
 app.use(express.json());
 
-// -------------------
-// 4. DATABASE CONNECTION
-// -------------------
+// =========================================================================
+// 4. Route Mounting
+// =========================================================================
 
-const DB_URI = process.env.MONGO_URI;
-
-// Asynchronous function to connect to the database
-const connectDB = async () => {
-  try {
-    // Attempt to connect to MongoDB using the URI from environment variables
-    await mongoose.connect(DB_URI);
-    console.log('✅ MongoDB successfully connected.');
-  } catch (err) {
-    // If the connection fails, log the error and exit the process.
-    console.error(`❌ MongoDB connection error: ${err.message}`);
-    // Exit process with a failure code
-    process.exit(1);
-  }
-};
-
-// Call the function to connect to the database
-connectDB();
-
-// -------------------
-// 5. ROUTE INTEGRATION
-// -------------------
-
-// Mount the authentication routes under the '/api/v1/auth' endpoint.
-// This prefixes all routes in authRoutes.js with this path.
-app.use('/api/v1/auth', authRoutes);
-
-// A simple root route to confirm the server is running
+// A simple root route to verify the server is running.
 app.get('/', (req, res) => {
-  res.status(200).send('Quilox Auth API is up and running! 🚀');
+  res.status(200).send('API is running successfully!');
 });
 
-// -------------------
-// 6. ERROR HANDLING MIDDLEWARE
-// -------------------
+// Mount the user routes at the '/api/users' base path.
+// All routes defined in userRoutes.js will be prefixed with '/api/users'.
+app.use('/api/users', userRoutes);
 
-// This is a generic error handler that catches any unhandled errors.
-app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).send('Something broke!');
-});
+// Mount the post routes at the '/api/posts' base path.
+// All routes defined in postRoutes.js will be prefixed with '/api/posts'.
+app.use('/api/posts', postRoutes);
 
-// -------------------
-// 7. SERVER START
-// -------------------
+// =========================================================================
+// 5. Start the Server
+// =========================================================================
 
-const PORT = process.env.PORT || 5000;
-
-// Start the server and listen for incoming requests on the specified port.
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-  console.log('Press CTRL + C to stop the server.');
+// Make the app listen for incoming requests on the specified port.
+app.listen(port, () => {
+  console.log(`Server is listening on port ${port}`);
+  console.log('API documentation:');
+  console.log(`- Users API: http://localhost:${port}/api/users`);
+  console.log(`- Posts API: http://localhost:${port}/api/posts`);
 });
