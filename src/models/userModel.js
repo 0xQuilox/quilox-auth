@@ -35,11 +35,18 @@ const userSchema = new mongoose.Schema({
     select: false
   },
   // Role field: controls user permissions for Role-Based Access Control (RBAC).
-  // Uses an enum to restrict values to 'user', 'editor', or 'admin'.
   role: {
     type: String,
-    enum: ['user', 'editor', 'admin'],
+    enum: ['user', 'editor', 'admin', 'viewer'],
     default: 'user'
+  },
+  // Optional username for compat with userRoutes demo
+  username: {
+    type: String,
+    trim: true,
+    minlength: 3,
+    maxlength: 30,
+    sparse: true,
   },
   // Active status: allows for deactivating users without deleting their data.
   isActive: {
@@ -65,24 +72,14 @@ const userSchema = new mongoose.Schema({
  * if it has been newly created or modified.
  */
 userSchema.pre('save', async function(next) {
-  // If the password has not been modified, move to the next middleware.
-  if (!this.isModified('password')) {
-    return next();
-  }
-
+  if (!this.isModified('password')) return next();
   try {
-    // Generate a salt with 10 rounds. A higher number increases security
-    // but also the time required to hash the password.
-    const salt = await bcrypt.genSalt(10);
-    
-    // Hash the password with the generated salt.
+    const rounds = parseInt(process.env.BCRYPT_SALT_ROUNDS || process.env.SALT_ROUNDS || '10', 10);
+    const salt = await bcrypt.genSalt(Number.isFinite(rounds) ? rounds : 10);
     this.password = await bcrypt.hash(this.password, salt);
-    
-    // Continue with the save operation.
-    next();
+    return next();
   } catch (error) {
-    // Pass any errors to the next middleware.
-    next(error);
+    return next(error);
   }
 });
 

@@ -1,140 +1,122 @@
 /**
  * @file jwtUtils.js
- * @description An extensive and well-documented utility module for handling JSON Web Tokens (JWTs).
- * This module centralizes all JWT-related logic, including token generation and verification,
- * to ensure consistency and security across your application.
- *
- * It uses the popular 'jsonwebtoken' library and handles common use cases and errors.
+ * @description Utility module for JWT generation and verification.
+ * - No side-effects on import (no console.log, no demo, no process.exit).
+ * - Lazy-validates config so the library can be required without env (e.g. tests).
+ * - Supports access + refresh tokens, configurable via env or options.
  */
 
 const jwt = require('jsonwebtoken');
-const dotenv = require('dotenv');
 
-// Load environment variables from a .env file.
-// This is a crucial security step to keep your JWT secret key private.
-dotenv.config();
-
-// =========================================================================
-// 1. Configuration & Constants
-// =========================================================================
-// The JWT secret key. This must be a long, complex, and random string.
-// DO NOT hardcode this value. Use environment variables.
-const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) {
-  // Gracefully handle a missing secret to prevent silent failures.
-  console.error('FATAL ERROR: JWT_SECRET is not defined in the environment variables.');
-  process.exit(1);
+function getSecret(secret) {
+  return secret || process.env.JWT_SECRET;
 }
 
-// Token expiration time. Shorter expiration times enhance security.
-// You can use a library like 'ms' for more human-readable times (e.g., '1h', '30m').
-const TOKEN_EXPIRATION = '1h';
+function getRefreshSecret(secret) {
+  return secret || process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET;
+}
 
-// =========================================================================
-// 2. Token Generation
-// =========================================================================
+function getExpiresIn(expiresIn) {
+  return expiresIn || process.env.JWT_EXPIRES_IN || '1h';
+}
+
+function getRefreshExpiresIn(expiresIn) {
+  return expiresIn || process.env.JWT_REFRESH_EXPIRES_IN || '7d';
+}
+
+function assertSecret(secret, label = 'JWT_SECRET') {
+  if (!secret) {
+    throw new Error(
+      `${label} is not defined. Set process.env.${label} or pass { secret } option.`
+    );
+  }
+}
+
 /**
- * Generates a new JWT.
- * @param {object} payload - The data to encode in the token. Avoid storing sensitive
- * information like passwords. Typically includes user ID, role, etc.
- * @param {string} [expiresIn=TOKEN_EXPIRATION] - The expiration time for the token.
- * @returns {string} The signed JWT.
- * @throws {Error} Throws an error if payload is invalid or signing fails.
+ * Generate a signed JWT.
+ * @param {object} payload
+ * @param {object} [options]
+ * @param {string} [options.secret]
+ * @param {string|number} [options.expiresIn]
+ * @returns {string}
  */
-function generateToken(payload, expiresIn = TOKEN_EXPIRATION) {
+function generateToken(payload, options = {}) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error('Payload must be a non-null object.');
+  }
+  // allow legacy signature: generateToken(payload, '1h')
+  if (typeof options === 'string' || typeof options === 'number') {
+    options = { expiresIn: options };
+  }
+  const secret = getSecret(options.secret);
+  assertSecret(secret, 'JWT_SECRET');
+  const expiresIn = getExpiresIn(options.expiresIn);
+  try {
+    return jwt.sign(payload, secret, { expiresIn });
+  } catch (err) {
+    throw new Error(`Could not generate token: ${err.message}`);
+  }
+}
+
+/**
+ * Generate a refresh token (longer-lived, separate secret if configured).
+ */
+function generateRefreshToken(payload, options = {}) {
   if (!payload || typeof payload !== 'object') {
-    throw new Error('Payload must be a non-null object to generate a token.');
+    throw new Error('Payload must be a non-null object.');
   }
-  try {
-    const token = jwt.sign(payload, JWT_SECRET, { expiresIn });
-    return token;
-  } catch (err) {
-    console.error('Error generating token:', err);
-    throw new Error('Could not generate token.');
-  }
+  if (typeof options === 'string') options = { expiresIn: options };
+  const secret = getRefreshSecret(options.secret);
+  assertSecret(secret, 'JWT_REFRESH_SECRET');
+  const expiresIn = getRefreshExpiresIn(options.expiresIn);
+  return jwt.sign(payload, secret, { expiresIn });
 }
 
-// =========================================================================
-// 3. Token Verification
-// =========================================================================
 /**
- * Verifies a JWT and returns the decoded payload.
- * @param {string} token - The JWT string to verify.
- * @returns {object|null} The decoded payload if the token is valid, otherwise null.
+ * Verify a JWT. Returns decoded payload or null (never throws for expired/invalid).
+ * @param {string} token
+ * @param {object} [options]
+ * @param {string} [options.secret]
+ * @returns {object|null}
  */
-function verifyToken(token) {
-  if (!token || typeof token !== 'string') {
-    return null;
-  }
+function verifyToken(token, options = {}) {
+  if (!token || typeof token !== 'string') return null;
+  if (typeof options === 'string') options = { secret: options };
+  const secret = getSecret(options.secret);
+  if (!secret) return null;
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    return decoded;
-  } catch (err) {
-    // This catch block handles various verification errors like:
-    // jwt.TokenExpiredError: if the token has expired.
-    // jwt.JsonWebTokenError: if the token is malformed or invalid signature.
-    // jwt.NotBeforeError: if the 'nbf' claim is in the future.
-    console.error('Token verification failed:', err.message);
+    return jwt.verify(token, secret);
+  } catch (_err) {
     return null;
   }
 }
 
-// =========================================================================
-// 4. Example Usage
-// =========================================================================
-
-// Example payload for a user.
-const userPayload = {
-  userId: '12345',
-  email: 'john.doe@example.com',
-  role: 'admin'
-};
-
-// Example of how to use the functions.
-console.log('--- JWT Utility Module Demo ---');
-
-// --- Step 1: Generate a token ---
-try {
-  const token = generateToken(userPayload);
-  console.log('\nGenerated JWT:');
-  console.log(token);
-
-  // --- Step 2: Verify the token ---
-  const decodedPayload = verifyToken(token);
-  if (decodedPayload) {
-    console.log('\nVerified Token Payload:');
-    console.log(decodedPayload);
-  } else {
-    console.log('\nToken verification failed.');
+function verifyRefreshToken(token, options = {}) {
+  if (!token || typeof token !== 'string') return null;
+  const secret = getRefreshSecret(options.secret);
+  if (!secret) return null;
+  try {
+    return jwt.verify(token, secret);
+  } catch (_err) {
+    return null;
   }
-
-  // --- Step 3: Simulate an expired token for testing ---
-  // Create a token that expires in 1 second.
-  const expiredToken = generateToken(userPayload, '1s');
-  console.log('\nSimulating a token that expires in 1 second...');
-  setTimeout(() => {
-    const verificationResult = verifyToken(expiredToken);
-    if (!verificationResult) {
-      console.log('\nSuccessfully handled expired token.');
-    }
-  }, 1500); // Wait 1.5 seconds to ensure it's expired.
-
-  // --- Step 4: Simulate an invalid token ---
-  const invalidToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.invalid.signature';
-  console.log('\nVerifying an invalid token...');
-  const invalidResult = verifyToken(invalidToken);
-  if (!invalidResult) {
-    console.log('Successfully handled invalid token.');
-  }
-
-} catch (err) {
-  console.error('\nAn error occurred during the demo:', err.message);
 }
 
-// =========================================================================
-// 5. Export functions for use in other modules
-// =========================================================================
+/**
+ * Strict verify that throws on failure. Useful for middleware that wants error details.
+ */
+function verifyTokenOrThrow(token, options = {}) {
+  const secret = getSecret(options.secret);
+  assertSecret(secret);
+  return jwt.verify(token, secret);
+}
+
 module.exports = {
   generateToken,
+  generateRefreshToken,
   verifyToken,
+  verifyRefreshToken,
+  verifyTokenOrThrow,
+  // backwards compat alias
+  getSecret,
 };

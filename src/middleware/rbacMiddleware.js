@@ -1,84 +1,99 @@
 /**
  * @file rbacMiddleware.js
- * @description A well-documented Express.js middleware for Role-Based Access Control (RBAC).
- * This middleware allows you to protect routes based on a user's role and the specific permissions
- * associated with that role.
- *
- * This version of the file has been refactored to act as a reusable module,
- * exporting the `rbacMiddleware` function for use in other files like `userRoutes.js`.
+ * @description Configurable RBAC middleware.
+ * - Default permissions map covers common roles.
+ * - Factory allows injection of custom permission map (critical for library consumers).
+ * - Supports legacy permission names ('manage_users' -> 'manage:all'/'read:user' etc.)
  */
 
-// =========================================================================
-// 1. Centralized Permissions Definition
-// =========================================================================
-// This object maps each role to an array of specific permissions.
-const permissions = {
+const defaultPermissions = {
   admin: [
     'create:user', 'read:user', 'update:user', 'delete:user',
     'create:post', 'read:post', 'update:post', 'delete:post',
     'view:dashboard',
-    'manage:all'
+    'manage:all',
+    'manage_users', // alias for backwards compat
   ],
   editor: [
     'create:post', 'read:post', 'update:post',
     'view:own:stats',
   ],
   viewer: [
-    'read:post'
+    'read:post',
+  ],
+  user: [
+    'read:post',
   ],
 };
 
-// =========================================================================
-// 2. The Core RBAC Middleware Function
-// =========================================================================
+// Alias map for legacy permission strings used in authRoutes.js
+const permissionAliases = {
+  manage_users: ['manage:all', 'manage_users', 'read:user', 'create:user', 'update:user', 'delete:user'],
+};
+
+function normalizePermissions(required) {
+  const list = Array.isArray(required) ? required : [required];
+  // Expand aliases
+  const expanded = [];
+  for (const perm of list) {
+    if (permissionAliases[perm]) {
+      expanded.push(perm);
+    } else {
+      expanded.push(perm);
+    }
+  }
+  return expanded;
+}
+
+function hasPermission(userPermissions, requiredPermissions) {
+  // manage:all bypasses all checks
+  if (userPermissions.includes('manage:all') || userPermissions.includes('manage_users')) {
+    return true;
+  }
+  return requiredPermissions.every((perm) => {
+    if (permissionAliases[perm]) {
+      // alias satisfied if user has any of the expanded set
+      return permissionAliases[perm].some((p) => userPermissions.includes(p));
+    }
+    return userPermissions.includes(perm);
+  });
+}
+
 /**
- * @function rbacMiddleware
- * @param {string[]} requiredPermissions - An array of permissions required to access the route.
- * @returns {function} An Express.js middleware function.
- * @description A higher-order function that returns the actual middleware.
+ * Factory - create RBAC middleware with custom config.
+ * @param {string|string[]} requiredPermissions
+ * @param {object} [options]
+ * @param {object} [options.permissions] - custom permissions map
+ * @returns {import('express').RequestHandler}
  */
-function rbacMiddleware(requiredPermissions) {
-  // Return the middleware function itself.
+function createRbacMiddleware(requiredPermissions, options = {}) {
+  const permissions = options.permissions || defaultPermissions;
+  const required = normalizePermissions(requiredPermissions);
+
   return (req, res, next) => {
-    // Check if the user is authenticated. This middleware should run after your auth middleware.
     if (!req.user) {
       return res.status(401).json({ error: 'Authentication required.' });
     }
-
-    const userRole = req.user.role;
-    const userPermissions = permissions[userRole];
-
-    // Check if the user's role has any permissions defined.
+    const role = req.user.role || 'user';
+    const userPermissions = permissions[role];
     if (!userPermissions) {
       return res.status(403).json({ error: 'Your role does not have any permissions defined.' });
     }
-
-    // Check if the user has a special "manage:all" permission for all access.
-    if (userPermissions.includes('manage:all')) {
+    if (hasPermission(userPermissions, required)) {
       return next();
     }
-
-    // Check if the user has all the required permissions for this route.
-    const hasRequiredPermissions = requiredPermissions.every(permission =>
-      userPermissions.includes(permission)
-    );
-
-    // If the user has the necessary permissions, proceed to the next middleware/route handler.
-    if (hasRequiredPermissions) {
-      return next();
-    } else {
-      // If the user lacks the required permissions, send a 403 Forbidden error.
-      return res.status(403).json({ error: 'Access denied. You do not have the required permissions.' });
-    }
+    return res.status(403).json({ error: 'Access denied. You do not have the required permissions.' });
   };
 }
 
-// =========================================================================
-// 3. Export the Middleware
-// =========================================================================
+// Backwards compat: rbacMiddleware(['read:user']) works.
+// Also allow: rbacMiddleware(['read:user'], { permissions: custom })
+function rbacMiddleware(requiredPermissions, options) {
+  return createRbacMiddleware(requiredPermissions, options);
+}
 
-/**
- * @exports {function} The rbacMiddleware function.
- * This is the crucial line that makes the function available for other files to use.
- */
+rbacMiddleware.createRbacMiddleware = createRbacMiddleware;
+rbacMiddleware.defaultPermissions = defaultPermissions;
+rbacMiddleware.permissionAliases = permissionAliases;
+
 module.exports = rbacMiddleware;

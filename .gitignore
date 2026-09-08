@@ -3,3 +3,22 @@
 
 # dotenv
 .env
+.env.local
+
+# logs
+logs
+*.log
+npm-debug.log*
+
+# coverage
+coverage
+.nyc_output
+
+# OS
+.DS_Store
+Thumbs.db
+
+# editor
+.vscode
+.idea
+*.swp

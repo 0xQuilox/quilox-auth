@@ -1,281 +1,283 @@
 /**
  * @file authController.js
- * @description This file contains the core business logic for the
- * Quilox Auth API. It handles user registration, login, profile management,
- * and user management tasks for administrators.
+ * @description Auth business logic - hardened: isActive checks, role-escalation guard,
+ * refresh tokens, changePassword, and no import side-effects.
  */
 
-// -------------------
-// 1. MODULE IMPORTS
-// -------------------
-
-const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-const User = require('../src/models/userModel'); // Import the Mongoose User model
+const User = require('../models/userModel');
+const jwtUtils = require('../utils/jwtUtils');
 
-// -------------------
-// 2. HELPER FUNCTIONS
-// -------------------
-
-/**
- * Generates a JSON Web Token (JWT) for a user.
- * @param {string} id - The user's database ID.
- * @returns {string} - The signed JWT.
- */
-const generateToken = (id) => {
-  return jwt.sign({ id }, process.env.JWT_SECRET, {
-    expiresIn: process.env.JWT_EXPIRES_IN,
+function signTokens(user) {
+  const payload = { id: user._id.toString(), email: user.email, role: user.role };
+  const accessToken = jwtUtils.generateToken(payload, {
+    expiresIn: process.env.JWT_EXPIRES_IN || '1h',
   });
-};
+  let refreshToken = null;
+  try {
+    refreshToken = jwtUtils.generateRefreshToken(payload, {
+      expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d',
+    });
+  } catch (_e) {
+    // refresh secret not configured - gracefully skip
+  }
+  return { accessToken, refreshToken };
+}
 
 // ----------------------------------------------------
-// 3. AUTHENTICATION & REGISTRATION CONTROLLER FUNCTIONS
+// Register
 // ----------------------------------------------------
-
-/**
- * @desc    Registers a new user in the system.
- * @route   POST /api/v1/auth/register
- * @access  Public
- * @param   {object} req - The request object from Express.
- * @param   {object} res - The response object from Express.
- */
 exports.register = async (req, res) => {
   try {
-    const { email, password, role } = req.body;
+    const { email, password, role, username } = req.body;
 
-    // Check if the user already exists
-    const existingUser = await User.findOne({ email });
-    if (existingUser) {
-      return res.status(400).json({ message: 'User with this email already exists' });
+    // Prevent privilege escalation: only allow admin to assign non-default roles.
+    // If request is unauthenticated, force 'user' regardless of body.role.
+    const requestedRole = role || 'user';
+    let finalRole = 'user';
+    if (requestedRole !== 'user') {
+      // If caller is admin (has valid token with admin role), allow; otherwise force user
+      if (req.user && req.user.role === 'admin') {
+        finalRole = requestedRole;
+      } else if (requestedRole === 'admin' || requestedRole === 'editor') {
+        // Silently downgrade rather than error to avoid role enumeration
+        finalRole = 'user';
+      }
     }
 
-    // Create a new user instance
-    const newUser = new User({ email, password, role });
+    const normalizedEmail = email.toLowerCase().trim();
+    const existingUser = await User.findOne({ email: normalizedEmail });
+    if (existingUser) {
+      return res.status(409).json({ message: 'User with this email already exists' });
+    }
+
+    const newUser = new User({ email: normalizedEmail, password, role: finalRole, username });
     await newUser.save();
 
-    // Generate a JWT for the newly created user
-    const token = generateToken(newUser._id);
+    const { accessToken, refreshToken } = signTokens(newUser);
 
-    // Respond with success message, user data, and the token
-    res.status(201).json({
+    return res.status(201).json({
       message: 'User registered successfully',
-      token,
-      user: {
-        id: newUser._id,
-        email: newUser.email,
-        role: newUser.role,
-      },
+      token: accessToken,
+      refreshToken,
+      user: { id: newUser._id, email: newUser.email, role: newUser.role },
     });
   } catch (error) {
+    // Duplicate key race condition
+    if (error.code === 11000) {
+      return res.status(409).json({ message: 'User with this email already exists' });
+    }
     console.error('Error during user registration:', error);
-    res.status(500).json({ message: 'Server error during registration' });
+    return res.status(500).json({ message: 'Server error during registration' });
   }
 };
 
-/**
- * @desc    Authenticates a user and generates a JWT upon successful login.
- * @route   POST /api/v1/auth/login
- * @access  Public
- * @param   {object} req - The request object.
- * @param   {object} res - The response object.
- */
+// ----------------------------------------------------
+// Login
+// ----------------------------------------------------
 exports.login = async (req, res) => {
   try {
     const { email, password } = req.body;
+    const normalizedEmail = email.toLowerCase().trim();
 
-    // Find the user by email and explicitly select the password field
-    const user = await User.findOne({ email }).select('+password');
+    const user = await User.findOne({ email: normalizedEmail }).select('+password');
     if (!user) {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
+    if (user.isActive === false) {
+      return res.status(403).json({ message: 'Account is deactivated. Contact support.' });
+    }
 
-    // Compare the provided password with the stored hashed password
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
-    // Generate a JWT for the authenticated user
-    const token = generateToken(user._id);
+    const { accessToken, refreshToken } = signTokens(user);
 
-    // Respond with a success message, the token, and user data (without password)
-    res.status(200).json({
+    return res.status(200).json({
       message: 'Logged in successfully',
-      token,
-      user: {
-        id: user._id,
-        email: user.email,
-        role: user.role,
-      },
+      token: accessToken,
+      refreshToken,
+      user: { id: user._id, email: user.email, role: user.role },
     });
   } catch (error) {
     console.error('Error during user login:', error);
-    res.status(500).json({ message: 'Server error during login' });
+    return res.status(500).json({ message: 'Server error during login' });
+  }
+};
+
+// ----------------------------------------------------
+// Refresh token
+// ----------------------------------------------------
+exports.refresh = async (req, res) => {
+  try {
+    const { refreshToken } = req.body;
+    if (!refreshToken) {
+      return res.status(400).json({ message: 'refreshToken is required' });
+    }
+    const decoded = jwtUtils.verifyRefreshToken(refreshToken);
+    if (!decoded || !decoded.id) {
+      return res.status(401).json({ message: 'Invalid or expired refresh token' });
+    }
+    const user = await User.findById(decoded.id);
+    if (!user || user.isActive === false) {
+      return res.status(401).json({ message: 'Invalid refresh token' });
+    }
+    const payload = { id: user._id.toString(), email: user.email, role: user.role };
+    const accessToken = jwtUtils.generateToken(payload);
+    return res.status(200).json({ token: accessToken });
+  } catch (error) {
+    console.error('Error refreshing token:', error);
+    return res.status(500).json({ message: 'Server error' });
+  }
+};
+
+// ----------------------------------------------------
+// Change password (was missing, referenced by authRoutes)
+// ----------------------------------------------------
+exports.changePassword = async (req, res) => {
+  try {
+    const userId = req.user.id || req.user.userId || req.user._id;
+    const { currentPassword, newPassword } = req.body;
+
+    const user = await User.findById(userId).select('+password');
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    const isMatch = await bcrypt.compare(currentPassword, user.password);
+    if (!isMatch) return res.status(401).json({ message: 'Current password is incorrect' });
+
+    user.password = newPassword; // pre-save hook will hash
+    await user.save();
+
+    return res.status(200).json({ message: 'Password changed successfully' });
+  } catch (error) {
+    console.error('Error changing password:', error);
+    return res.status(500).json({ message: 'Server error' });
   }
 };
 
 // ---------------------------------------------
-// 4. USER PROFILE MANAGEMENT CONTROLLER FUNCTIONS
+// Profile
 // ---------------------------------------------
-
-/**
- * @desc    Gets the profile of the authenticated user.
- * @route   GET /api/v1/auth/profile
- * @access  Private
- * @param   {object} req - The request object, containing the user ID from authMiddleware.
- * @param   {object} res - The response object.
- */
 exports.getProfile = async (req, res) => {
   try {
-    // Get the user ID from the JWT payload added by the authMiddleware
-    const user = await User.findById(req.user.id);
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
-    }
+    const id = req.user.id || req.user.userId;
+    const user = await User.findById(id);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+    if (user.isActive === false) return res.status(403).json({ message: 'Account is deactivated' });
 
-    res.status(200).json({
+    return res.status(200).json({
       message: 'Profile fetched successfully',
-      user: {
-        id: user._id,
-        email: user.email,
-        role: user.role,
-      },
+      user: { id: user._id, email: user.email, role: user.role, isActive: user.isActive, createdAt: user.createdAt },
     });
   } catch (error) {
     console.error('Error fetching user profile:', error);
-    res.status(500).json({ message: 'Server error' });
+    return res.status(500).json({ message: 'Server error' });
   }
 };
 
-/**
- * @desc    Updates the profile of the authenticated user.
- * @route   PATCH /api/v1/auth/profile
- * @access  Private
- * @param   {object} req - The request object.
- * @param   {object} res - The response object.
- */
 exports.updateProfile = async (req, res) => {
   try {
-    const userId = req.user.id;
-    const { email, role } = req.body; // Role cannot be changed by the user themselves
+    const userId = req.user.id || req.user.userId;
+    const { email } = req.body;
 
-    const updatedUser = await User.findByIdAndUpdate(
-      userId,
-      { email },
-      { new: true, runValidators: true } // Return the updated document and run schema validators
-    ).select('-password');
+    const update = {};
+    if (email) update.email = email.toLowerCase().trim();
 
-    if (!updatedUser) {
-      return res.status(404).json({ message: 'User not found' });
-    }
+    const updatedUser = await User.findByIdAndUpdate(userId, update, {
+      new: true,
+      runValidators: true,
+    }).select('-password');
 
-    res.status(200).json({
+    if (!updatedUser) return res.status(404).json({ message: 'User not found' });
+
+    return res.status(200).json({
       message: 'Profile updated successfully',
       user: updatedUser,
     });
   } catch (error) {
+    if (error.code === 11000) {
+      return res.status(409).json({ message: 'Email already in use' });
+    }
     console.error('Error updating user profile:', error);
-    res.status(500).json({ message: 'Server error' });
+    return res.status(500).json({ message: 'Server error' });
   }
 };
 
 // ----------------------------------------------------
-// 5. USER MANAGEMENT CONTROLLER FUNCTIONS (ADMIN ONLY)
+// Admin: User Management
 // ----------------------------------------------------
-
-/**
- * @desc    Gets a list of all users.
- * @route   GET /api/v1/auth/users
- * @access  Private (Admin Only)
- * @param   {object} req - The request object.
- * @param   {object} res - The response object.
- */
 exports.getAllUsers = async (req, res) => {
   try {
-    const users = await User.find().select('-password');
-    res.status(200).json({
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 100);
+    const skip = (page - 1) * limit;
+
+    const [users, total] = await Promise.all([
+      User.find().select('-password').skip(skip).limit(limit).sort({ createdAt: -1 }),
+      User.countDocuments(),
+    ]);
+
+    return res.status(200).json({
       message: 'Users fetched successfully',
       count: users.length,
+      total,
+      page,
+      totalPages: Math.ceil(total / limit),
       users,
     });
   } catch (error) {
     console.error('Error fetching all users:', error);
-    res.status(500).json({ message: 'Server error' });
+    return res.status(500).json({ message: 'Server error' });
   }
 };
 
-/**
- * @desc    Gets a single user by their ID.
- * @route   GET /api/v1/auth/users/:id
- * @access  Private (Admin Only)
- * @param   {object} req - The request object.
- * @param   {object} res - The response object.
- */
 exports.getUserById = async (req, res) => {
   try {
     const user = await User.findById(req.params.id).select('-password');
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
-    }
-    res.status(200).json({
-      message: 'User fetched successfully',
-      user,
-    });
+    if (!user) return res.status(404).json({ message: 'User not found' });
+    return res.status(200).json({ message: 'User fetched successfully', user });
   } catch (error) {
     console.error('Error fetching user by ID:', error);
-    res.status(500).json({ message: 'Server error' });
+    return res.status(500).json({ message: 'Server error' });
   }
 };
 
-/**
- * @desc    Updates a user's details by their ID.
- * @route   PATCH /api/v1/auth/users/:id
- * @access  Private (Admin Only)
- * @param   {object} req - The request object.
- * @param   {object} res - The response object.
- */
 exports.updateUserById = async (req, res) => {
   try {
-    const { email, role } = req.body;
-    const updatedUser = await User.findByIdAndUpdate(
-      req.params.id,
-      { email, role },
-      { new: true, runValidators: true }
-    ).select('-password');
+    // Prevent self-role downgrade lockout: warn but allow
+    const { email, role, isActive } = req.body;
+    const update = {};
+    if (email) update.email = email.toLowerCase().trim();
+    if (role) update.role = role;
+    if (typeof isActive === 'boolean') update.isActive = isActive;
 
-    if (!updatedUser) {
-      return res.status(404).json({ message: 'User not found' });
-    }
+    const updatedUser = await User.findByIdAndUpdate(req.params.id, update, {
+      new: true,
+      runValidators: true,
+    }).select('-password');
 
-    res.status(200).json({
-      message: 'User updated successfully',
-      user: updatedUser,
-    });
+    if (!updatedUser) return res.status(404).json({ message: 'User not found' });
+
+    return res.status(200).json({ message: 'User updated successfully', user: updatedUser });
   } catch (error) {
     console.error('Error updating user:', error);
-    res.status(500).json({ message: 'Server error' });
+    return res.status(500).json({ message: 'Server error' });
   }
 };
 
-/**
- * @desc    Deletes a user by their ID.
- * @route   DELETE /api/v1/auth/users/:id
- * @access  Private (Admin Only)
- * @param   {object} req - The request object.
- * @param   {object} res - The response object.
- */
 exports.deleteUserById = async (req, res) => {
   try {
-    const deletedUser = await User.findByIdAndDelete(req.params.id);
-    if (!deletedUser) {
-      return res.status(404).json({ message: 'User not found' });
+    const requesterId = (req.user.id || req.user.userId || '').toString();
+    if (requesterId === req.params.id) {
+      return res.status(400).json({ message: 'You cannot delete your own account via this endpoint' });
     }
-    res.status(200).json({
-      message: 'User deleted successfully',
-      user: deletedUser,
-    });
+    const deletedUser = await User.findByIdAndDelete(req.params.id);
+    if (!deletedUser) return res.status(404).json({ message: 'User not found' });
+    return res.status(200).json({ message: 'User deleted successfully', user: { id: deletedUser._id } });
   } catch (error) {
     console.error('Error deleting user:', error);
-    res.status(500).json({ message: 'Server error' });
+    return res.status(500).json({ message: 'Server error' });
   }
 };

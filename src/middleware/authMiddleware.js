@@ -1,57 +1,74 @@
 /**
  * @file authMiddleware.js
- * @description A detailed Express.js middleware for authenticating requests using JWTs.
- * This middleware is responsible for:
- * - Extracting the token from the Authorization header.
- * - Verifying the token's validity and expiration using jwtUtils.
- * - Attaching the authenticated user's data to the request object (req.user)
- * for downstream middleware and route handlers to use.
- * - Handling various authentication failures (missing token, invalid token, etc.)
- * by sending a 401 Unauthorized response.
+ * @description JWT authentication middleware - robust, configurable, no side-effects.
  */
 
-const jwt = require('jsonwebtoken');
-const jwtUtils = require('../src/utils/jwtUtils');
+const jwtUtils = require('../utils/jwtUtils');
 
 /**
- * @function authMiddleware
- * @param {object} req - The Express request object.
- * @param {object} res - The Express response object.
- * @param {function} next - The next middleware function in the stack.
- * @returns {void}
- * @description Authenticates a user based on the JWT provided in the
- * Authorization header.
+ * Extract Bearer token case-insensitively.
  */
-function authMiddleware(req, res, next) {
-  // Check for the 'Authorization' header.
-  const authHeader = req.headers.authorization;
-  if (!authHeader) {
-    // If no header is present, authentication fails.
-    return res.status(401).json({ error: 'Authorization header is missing.' });
+function extractToken(authHeader) {
+  if (!authHeader || typeof authHeader !== 'string') return null;
+  const trimmed = authHeader.trim();
+  // Accept "Bearer <token>" (case-insensitive) or raw token for flexibility
+  const parts = trimmed.split(/\s+/);
+  if (parts.length === 2 && /^Bearer$/i.test(parts[0])) {
+    return parts[1] || null;
   }
-
-  // The header format is typically "Bearer TOKEN".
-  const token = authHeader.split(' ')[1];
-
-  // If the token part is missing, the header format is invalid.
-  if (!token) {
-    return res.status(401).json({ error: 'Authorization token is missing or malformed.' });
+  if (parts.length === 1) {
+    return parts[0] || null;
   }
-
-  // Use the utility function to verify the token.
-  const decodedPayload = jwtUtils.verifyToken(token);
-
-  // If the token is invalid (e.g., expired, bad signature), the function returns null.
-  if (!decodedPayload) {
-    return res.status(401).json({ error: 'Invalid or expired token. Authentication failed.' });
-  }
-
-  // If the token is valid, attach the decoded user data to the request object.
-  // This makes the user's information available to all subsequent middleware and routes.
-  req.user = decodedPayload;
-
-  // Proceed to the next middleware or the route handler.
-  next();
+  return null;
 }
+
+/**
+ * Create auth middleware with optional config.
+ * @param {object} [options]
+ * @param {string} [options.secret] - override JWT_SECRET
+ * @param {string} [options.header] - header name (default: authorization)
+ */
+function createAuthMiddleware(options = {}) {
+  const secret = options.secret;
+  const headerName = (options.header || 'authorization').toLowerCase();
+
+  return function authMiddleware(req, res, next) {
+    const authHeader = req.headers[headerName] || req.headers.authorization;
+    if (!authHeader) {
+      return res.status(401).json({ error: 'Authorization header is missing.' });
+    }
+
+    const token = extractToken(authHeader);
+    if (!token) {
+      return res.status(401).json({ error: 'Authorization token is missing or malformed. Use: Bearer <token>' });
+    }
+
+    const decoded = jwtUtils.verifyToken(token, secret ? { secret } : {});
+    if (!decoded) {
+      return res.status(401).json({ error: 'Invalid or expired token. Authentication failed.' });
+    }
+
+    // Normalize common jwt payload shapes: { id } vs { userId } vs { _id }
+    const normalized = { ...decoded };
+    if (decoded.id && !decoded.userId) normalized.userId = decoded.id;
+    req.user = normalized;
+    // Backwards compat: expose `req.user.id` for controllers that read id
+    if (!req.user.id && req.user.userId) req.user.id = req.user.userId;
+    if (!req.user.id && req.user._id) req.user.id = req.user._id;
+
+    // Block deactivated accounts if payload carries flag (full check in controller/DB layer too)
+    if (decoded.isActive === false) {
+      return res.status(403).json({ error: 'Account is deactivated.' });
+    }
+
+    return next();
+  };
+}
+
+// Default instance for `require('./authMiddleware')` usage
+const authMiddleware = createAuthMiddleware();
+
+authMiddleware.createAuthMiddleware = createAuthMiddleware;
+authMiddleware.extractToken = extractToken;
 
 module.exports = authMiddleware;

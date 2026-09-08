@@ -1,113 +1,110 @@
-# Quilox Auth 🔑
-Quilox-Auth is a robust and scalable authentication and authorization boilerplate built on the Node.js and Express.js stack. It provides a secure foundation for any API, featuring:
+# Quilox Auth 🔑 v2.0.0
 
-# Overview
-JSON Web Token (JWT) Authentication: For stateless and secure user sessions.
+Secure, configurable authentication & RBAC middleware for Express + Mongoose. Ships as a library (no app boilerplate in your bundle).
 
-Role-Based Access Control (RBAC): To manage and restrict user permissions.
+## What's New in v2
+- **P0 fixes**: Broken `require()` paths, `bcrypt` vs `bcryptjs`, import side-effects / `process.exit` removed
+- **Security**: `helmet`/`cors`/`morgan` wired, rate-limiting, `isActive` checks, refresh tokens
+- **DX**: `exports`/`files`, `engines >=18`, `MIT` license, `TypeScript` types (`src/index.d.ts`), `jest` + `mongodb-memory-server`
+- See [CHANGELOG.md](./CHANGELOG.md)
 
-Data Validation: Ensures incoming data is clean and valid.
-
-Secure Password Handling: Uses bcrypt for one-way password hashing.
-
-Modular Architecture: Keeps the codebase organized and easy to extend.
-
-This project is designed to be a starting point, providing all the core security features you need to build your API with confidence.This module is built with security best practices in mind, including password hashing, token expiration, and secure route protection.
-
-# Prerequisites
-To use this module, you should have the following installed:
-
-Node.js (LTS version)
-
-MongoDB
-
-npm
-
-Installation
-You can install Quilox Auth in your Node.js project using npm.
-
+## Install
+```bash
 npm install quilox-auth
+# peers: express ^4|^5, mongoose ^7|^8 (optional if you bring your own DB)
+```
 
-Since this module is a complete solution, you'll also need to install the core dependencies used in the project.
+## Quickstart (as library)
+```js
+// server.js
+require('dotenv').config();
+const express = require('express');
+const mongoose = require('mongoose');
+const helmet = require('helmet');
+const cors = require('cors');
+const { authRoutes, errorHandler, notFound } = require('quilox-auth');
 
-npm install express mongoose bcrypt jsonwebtoken dotenv
+const app = express();
+app.use(helmet());
+app.use(cors());
+app.use(express.json());
 
-# Getting Started
-Follow these steps to get your project up and running.
+app.use('/api/v1/auth', authRoutes);
+app.use(notFound);
+app.use(errorHandler);
 
-1. Clone the Repository
-Bash: npm install
-git clone <your-repository-url>
-cd <your-project-directory>
+await mongoose.connect(process.env.MONGO_URI);
+app.listen(3000);
+```
 
-2. Install Dependencies
-Use npm to install all the necessary packages for the project.
-
-Bash
-
-<npm install>
-
-3. Configuration (.env)
-Create a .env file in the root of your project to store sensitive information.
-
-MONGO_URI=your_mongodb_connection_string
-JWT_SECRET=your_super_secret_jwt_key
+## Env (.env.example)
+```
+PORT=3000
+MONGO_URI=mongodb+srv://...
+JWT_SECRET=at_least_32_chars_random
 JWT_EXPIRES_IN=1h
-JWT_REFRESH_SECRET=your_super_secret_refresh_key
+JWT_REFRESH_SECRET=separate_long_random
 JWT_REFRESH_EXPIRES_IN=7d
+BCRYPT_SALT_ROUNDS=10
+CORS_ORIGIN=*
+```
 
-4. Run the Server
-Start the application using the following command:
+## API (mounted at /api/v1/auth)
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | /register | no + rate-limited | `{email,password,role?}` |
+| POST | /login | no + rate-limited | `{email,password}` |
+| POST | /refresh | no | `{refreshToken}` |
+| GET | /profile | yes | self |
+| PATCH | /profile | yes | `{email?}` |
+| PATCH | /change-password | yes | `{currentPassword,newPassword,confirmPassword}` |
+| GET | /users | admin | paginated `?page&limit` |
+| GET | /users/:id | admin | |
+| PATCH | /users/:id | admin | `{email?,role?,isActive?}` |
+| DELETE | /users/:id | admin | |
 
-Bash
+Include `Authorization: Bearer <token>`.
 
-node server.js
-The server should now be running, and you'll see a message in your console: Server is listening on port 3000.
+## Importing Pieces
+```js
+const { authMiddleware, rbacMiddleware, jwtUtils, passwordUtils, validatorMiddleware } = require('quilox-auth');
 
-# API Endpoints
-POST	/api/users	Creates a new user (registration).	Public
-GET	/api/users	Retrieves a list of all users.	Private (Admin-only)
-GET	/api/users/:id	Retrieves a single user by ID.	Private (Admin-only)
-PUT	/api/users/:id	Updates a user's details.	Private (Admin-only)
-DELETE	/api/users/:id	Deletes a user.	Private (Admin-only)
-POST	/api/posts	Creates a new post.	Private (Admin/Editor)
-GET	/api/posts	Retrieves a list of all posts.	Public
-GET	/api/posts/:id	Retrieves a single post by ID.	Public
-PUT	/api/posts/:id	Updates a post.	Private (Admin/Editor)
-DELETE	/api/posts/:id	Deletes a post.	Private (Admin-only)
+// protect a route
+app.get('/admin', authMiddleware, rbacMiddleware(['manage_users']), handler);
 
-# Project Structure
-.
-├── .env                  # Environment variables
-├── node_modules/         # Installed dependencies
-├── package.json          # Project metadata
-├── server.js             # Main entry point of the app
-└── src/
-    ├── api/
-    │   ├── routes/
-    │   │   ├── authRoutes.js     # User registration and login
-    │   │   ├── userRoutes.js     # API endpoints for user management
-    │   │   └── postRoutes.js     # API endpoints for post management
-    ├── middleware/
-    │   ├── authMiddleware.js     # JWT authentication middleware
-    │   ├── rbacMiddleware.js     # Role-based access control
-    │   └── validatorMiddleware.js# Joi-based data validation
-    └── utils/
-        ├── jwtUtils.js           # JWT generation and verification
-        └── passwordUtils.js      # Password hashing and comparison
+// custom RBAC map
+const adminOnly = rbacMiddleware(['manage_users'], { permissions: { superadmin: ['manage:all'] } });
 
-# Contributing
-We welcome contributions! If you would like to contribute, please follow these steps:
+// tokens
+const token = jwtUtils.generateToken({ id: user._id, role: user.role });
+const payload = jwtUtils.verifyToken(token);
+```
 
-Fork the repository.
+## Middleware
+- `authMiddleware` / `authMiddleware.createAuthMiddleware({secret, header})` - case-insensitive `Bearer`
+- `rbacMiddleware(['read:user'])` - `manage:all` bypass, alias `manage_users`, inject custom map
+- `validate({body: schema})` - Joi, strips unknown
+- `globalLimiter` / `authLimiter` - `express-rate-limit`
 
-Create a new branch (git checkout -b feature/your-feature-name).
+## Testing
+```bash
+npm test                # jest + mongodb-memory-server
+npm run lint
+```
 
-Make your changes and write clear commit messages.
+## Project Structure
+```
+src/
+  config/        # env validation
+  middleware/    # auth, rbac, validator, rateLimit, error
+  utils/         # jwt, password
+  models/        # User (mongoose)
+  api/routes/    # authRoutes (canonical)
+  index.js       # public entry
+  index.d.ts     # types
+server.js        # demo app (not published)
+tests/           # unit + integration
+```
 
-Push to your fork (git push origin feature/your-feature-name).
-
-Create a pull request with a detailed description of your changes.
-
-# License
-This project is licensed under the MIT License. See the LICENSE file for details.
+## License
+MIT
